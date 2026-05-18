@@ -1,0 +1,11 @@
+__pycache__/
+*.swp
+*.swo
+*.pyc
+.coverage
+*egg*
+doc/build/
+field.egg-info/
+build/
+.vscode
+dist/

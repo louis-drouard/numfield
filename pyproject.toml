@@ -1,0 +1,57 @@
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[project]
+name = "numfield"
+version = "0.1.1"
+description = "A structured cartesian mesh field representation for scientific computing"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "Louis DROUARD", email = "louis.drouard@cea.fr"}
+]
+maintainers = [
+    {name = "Louis DROUARD", email = "louis.drouard@cea.fr"}
+]
+keywords = [
+    "scientific-computing",
+    "mesh",
+    "field",
+    "numpy",
+    "cartesian",
+    "hdf5",
+    "visualization"
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Scientific/Engineering :: Physics",
+    "Topic :: Scientific/Engineering :: Visualization",
+]
+requires-python = ">=3.10"
+
+dependencies = [
+    "numpy>=1.26.4",
+    "matplotlib",
+    "h5py",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-mpl",
+    "nbclient",
+]
+
+[project.urls]
+Homepage = "https://github.com/louis-drouard/numfield"
+Repository = "https://github.com/louis-drouard/numfield.git"
+Issues = "https://github.com/louis-drouard/numfield/issues"
