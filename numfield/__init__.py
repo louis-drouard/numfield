@@ -30,6 +30,6 @@ from . import examples as _examples
 for _name in _examples.__all__:
     globals()[_name] = getattr(_examples, _name)
     if _name not in __all__:
-        __all__.append(_name)
+        __all__.append(_name) # pyright: ignore[reportUnsupportedDunderAll]
 
 del _sys, _examples

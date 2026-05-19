@@ -436,3 +436,124 @@ def test_fields_hdf_roundtrip(tmp_path, coarse_mesh):
     coll_loaded = Fields.from_hdf(str(filepath))
     assert coll.mesh == coll_loaded.mesh
     assert coll.data_names == coll_loaded.data_names
+
+
+# ─────────────────────────────────────────────────────────────────
+# Histogram tests
+# ─────────────────────────────────────────────────────────────────
+
+def test_field_histogram(coarse_field):
+    counts, edges = coarse_field.histogram(bins=5)
+    assert len(counts) == 5
+    assert len(edges) == 6
+    assert counts.sum() == coarse_field.size
+    assert edges[0] == pytest.approx(coarse_field.min())
+    assert edges[-1] == pytest.approx(coarse_field.max())
+
+
+def test_field_histogram_density(coarse_field):
+    pdf, edges = coarse_field.histogram(bins=10, density=True)
+    bin_widths = np.diff(edges)
+    integral = np.sum(pdf * bin_widths)
+    assert_allclose(integral, 1.0)
+
+
+def test_field_histogram_weights(coarse_field):
+    weights = np.ones_like(coarse_field.values)
+    counts, edges = coarse_field.histogram(bins=5, weights=weights)
+    assert len(counts) == 5
+    assert len(edges) == 6
+
+
+def test_field_histogram_volume_weighting(coarse_mesh):
+    values = np.ones(coarse_mesh.shape)
+    extensive_field = CartesianField('extensive', coarse_mesh, values, intensive=False)
+    counts, edges = extensive_field.histogram(bins=3, weights='volume')
+    assert counts.sum() == pytest.approx(coarse_mesh.volumes.sum())
+
+
+def test_field_histogram_nan_handling(coarse_field):
+    field_with_nan = coarse_field.copy()
+    field_with_nan.values[0, 0, 0] = np.nan
+    counts, edges = field_with_nan.histogram(bins=5)
+    assert counts.sum() == field_with_nan.size - 1
+
+# ─────────────────────────────────────────────────────────────────
+# extract_roi tests with dict format
+# ─────────────────────────────────────────────────────────────────
+
+def test_field_extract_roi_dict(coarse_field):
+    roi = coarse_field.extract_roi({'x': (0.0, 0.5)})
+    assert isinstance(roi, CartesianField)
+    assert roi.shape[0] == 1
+
+    roi_inclusive = coarse_field.extract_roi({'x': (0.0, 0.5)}, inclusive=True)
+    roi_exclusive = coarse_field.extract_roi({'x': (0.0, 0.5)}, inclusive=False)
+    assert roi_inclusive.shape[0] >= roi_exclusive.shape[0]
+
+
+def test_field_extract_roi_dict_indices(coarse_field):
+    roi = coarse_field.extract_roi({0: (0.0, 0.5)})
+    assert isinstance(roi, CartesianField)
+    assert roi.shape[0] == 1
+
+
+def test_field_extract_roi_dict_partial_bounds(coarse_field):
+    roi = coarse_field.extract_roi({'x': (0.5, None)})
+    assert isinstance(roi, CartesianField)
+    assert roi.shape[0] == 1
+
+# ─────────────────────────────────────────────────────────────────
+# extract_roi tests with tuple format
+# ─────────────────────────────────────────────────────────────────
+
+def test_field_extract_roi_tuple(fine_field):
+    bounds = ((0.2, 0.8), (0.2, 0.8), (0.2, 0.8))
+    roi = fine_field.extract_roi(bounds)
+    assert isinstance(roi, CartesianField)
+    assert roi.ndim == 3
+
+    bounds = ((0.0, 0.5), (0.0, 0.5), (0.0, 0.5))
+    roi = fine_field.extract_roi(bounds)
+    assert isinstance(roi, CartesianField)
+    assert roi.ndim == 3
+    expected_x = np.sum((fine_field.mesh.axes[0][:-1] + fine_field.mesh.axes[0][1:]) / 2 <= 0.5)
+    expected_y = np.sum((fine_field.mesh.axes[1][:-1] + fine_field.mesh.axes[1][1:]) / 2 <= 0.5)
+    expected_z = np.sum((fine_field.mesh.axes[2][:-1] + fine_field.mesh.axes[2][1:]) / 2 <= 0.5)
+    assert roi.shape == (expected_x, expected_y, expected_z)
+
+
+# ─────────────────────────────────────────────────────────────────
+# from_array tests
+# ─────────────────────────────────────────────────────────────────
+
+def test_field_from_array_basic():
+    values = np.array([[1., 2.], [3., 4.]])
+    field = CartesianField.from_array('test', values, [1., 2.], True)
+    
+    assert isinstance(field, CartesianField)
+    assert field.name == 'test'
+    assert_allclose(field.values, values)
+    assert field.intensive is True
+    assert field.shape == (2, 2)
+    assert field.ndim == 2
+
+    assert_allclose(field.mesh.axes[0], [0., 1., 2.])
+    assert_allclose(field.mesh.axes[1], [0., 2., 4.])
+
+
+def test_field_from_array_with_origin():
+    values = np.array([[10., 20.], [30., 40.]])
+    field = CartesianField.from_array('test', values, [2., 3.], False, origin=(5., 10.))
+    
+    stops_x = 5. + 2. * (2 + 0.5)
+    stops_y = 10. + 3. * (2 + 0.5)
+    assert_allclose(field.mesh.axes[0], [5., 7., 9.])
+    assert_allclose(field.mesh.axes[1], [10., 13., 16.])
+
+
+def test_field_from_array_invalid_steps():
+    values = np.ones((3, 4))
+    with pytest.raises(ValueError):
+        CartesianField.from_array('bad', values, [1.], True)
+

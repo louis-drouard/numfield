@@ -49,7 +49,7 @@ def test_is_submesh_of(coarse_mesh, fine_mesh):
     dy = [0.25, 0.25, 0.25, 0.25]
     dz = [0.5, 0.5]
     mesh = CartesianMesh(dx, dy, dz)
-    assert mesh.is_submesh_of(coarse_mesh)
+    assert coarse_mesh.is_submesh_of(mesh)
 
 def test_is_overlapping():
     mesh1 = CartesianMesh([0.5, 0.5], [0.5, 0.5], origin=(0, 0))
@@ -77,6 +77,13 @@ def test_is_overlapping():
 
     mesh2= CartesianMesh([0.5, 0.5], [0.5, 0.5], origin=(0, -0.5))
     assert mesh1.is_overlapping(mesh2)
+
+def test_mesh_regular():
+    m = CartesianMesh([0.5, 0.5, 0.5], [1.0, 1.0])
+    assert m.is_regular() is True
+
+    m = CartesianMesh([0.5, 1.0, 0.5], [1.0, 1.0])
+    assert m.is_regular() is False
 
 def test_rot90():
     x = np.array([0., 0.3, 0.4, 0.6, 1.])

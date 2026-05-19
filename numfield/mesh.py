@@ -37,6 +37,35 @@ logger = logging.getLogger(__name__)
 FLOATING_MESH_PRECISION = 8
 ATOL_FLOATING_MESH_PRECISION = 10**(-FLOATING_MESH_PRECISION)
 
+def isin_close(a, b, atol=1e-8):
+    """
+    Return True if every element of `a` is in `b` 
+    """
+    import numpy as np
+
+    a = np.asarray(a)
+    b = np.asarray(b)
+
+    if b.size == 0:
+        return a.size == 0
+
+    b_sorted = np.sort(b)
+
+    idx = np.searchsorted(b_sorted, a)
+
+    idx_left = np.clip(idx - 1, 0, len(b_sorted) - 1)
+    idx_right = np.clip(idx, 0, len(b_sorted) - 1)
+
+    left = b_sorted[idx_left]
+    right = b_sorted[idx_right]
+
+    mask = (
+        np.abs(a - left) <= atol
+    ) | (
+        np.abs(a - right) <= atol
+    )
+    return np.all(mask)
+
 class CartesianMesh:
     """
     Represents a Cartesian structured mesh in N-Dimensions.
@@ -74,7 +103,7 @@ class CartesianMesh:
     (1.5, 0.75)
     """
 
-    def __init__(self, *deltas, origin=None, axes_names=None) -> None:
+    def __init__(self, *deltas, origin=None, axes_names=None, name="") -> None:
         self._ndim = len(deltas)
         self._deltas = tuple(np.round(delta, FLOATING_MESH_PRECISION) for delta in deltas)
         origin = np.zeros(self._ndim) if origin is None else origin
@@ -85,12 +114,13 @@ class CartesianMesh:
         )
         self.axes_names = axes_names if axes_names else self._default_axes_names()
         if self.axes_names:
-            for i,name in enumerate(self.axes_names):
-                setattr(self, name, self._axes[i])
-                setattr(self, "d"+name, self._deltas[i])
+            for i, ax_name in enumerate(self.axes_names):
+                setattr(self, ax_name, self._axes[i])
+                setattr(self, "d"+ax_name, self._deltas[i])
+        self.name = name
 
     @classmethod
-    def from_axes(cls, *axes, axes_names=None):
+    def from_axes(cls, *axes, axes_names=None, name=""):
         """
         Construct a mesh from explicit axes coordinates.
 
@@ -107,10 +137,11 @@ class CartesianMesh:
         """
 
         rounded_unique_axes = tuple(np.unique(np.round(ax,8)) for ax in axes)
-        return cls(*tuple(np.diff(ax) for ax in rounded_unique_axes), origin=tuple(ax[0] for ax in rounded_unique_axes), axes_names=axes_names) # type: ignore
+        print(name)
+        return cls(*tuple(np.diff(ax) for ax in rounded_unique_axes), origin=tuple(ax[0] for ax in rounded_unique_axes), axes_names=axes_names, name=name) # type: ignore
 
     @classmethod
-    def from_linspace(cls, starts:list[float], stops:list[float], n_boundaries: list[int], axes_names=None):
+    def from_linspace(cls, starts:list[float], stops:list[float], n_boundaries: list[int], axes_names=None, name=""):
         """
         Construct a mesh from linearly-spaced boundaries along each axis.
 
@@ -141,7 +172,49 @@ class CartesianMesh:
         if axes_names is not None and len(axes_names) != len(starts):
             raise ValueError(f'Inconsistent number of axes {len(starts)} and axes names {len(axes_names)}')
         axes = [np.linspace(start, stop, n) for start, stop, n in zip(starts, stops, n_boundaries)]
-        return cls.from_axes(*axes, axes_names=axes_names)
+        return cls.from_axes(*axes, axes_names=axes_names, name=name)
+
+    @classmethod
+    def from_arange(cls, starts:list[float], stops:list[float], steps:list[float], axes_names=None, name=""):
+        """
+        Construct a mesh from arange-style boundaries along each axis.
+
+        Parameters
+        ----------
+        starts : list of float
+            Starting coordinate for each axis.
+        stops : list of float
+            Stopping coordinate for each axis.
+        steps :list of float
+            Step sizes along each axis.
+        axes_names : list of str, optional
+            Names for each axis.
+
+        Returns
+        -------
+        CartesianMesh
+            A new mesh constructed from the specified aranges.
+
+        Raises
+        ------
+        ValueError
+            If argument lengths are inconsistent or ``axes_names`` length does not
+            match the number of dimensions.
+
+        Examples
+        --------
+
+        >>> mesh = CartesianMesh.from_arange([0.0, 0.0], [10.0, 20.0], [0.5, 1.0])
+
+        """
+
+        if len({(len(starts), len(stops), len(steps))}) != 1:
+            raise ValueError(f'Inconsistent dimensions between the number of steps {len(steps)} and the mesh starts {len(starts)} and stops {len(stops)}')
+        if axes_names is not None and len(axes_names) != len(starts):
+            raise ValueError(f'Inconsistent number of axes {len(starts)} and axes names {len(axes_names)}')
+        axes = [np.arange(start, stop, s) for start, stop, s in zip(starts, stops, steps)]
+       
+        return cls.from_axes(*axes, axes_names=axes_names, name=name)
     
     def _default_axes_names(self)->None|list[str]:
         """
@@ -296,10 +369,11 @@ class CartesianMesh:
         """
         if mesh.ndim != self._ndim:
             return False
-        return all(
-            np.isin(mesh_axes, self_axes).all()
-            for self_axes, mesh_axes in zip(self._axes, mesh.axes)
-        )
+        return all(isin_close(self_axes, mesh_axes, atol=ATOL_FLOATING_MESH_PRECISION) for self_axes, mesh_axes in zip(self._axes, mesh.axes))
+        # return all(
+        #     np.isin(mesh_axes, self_axes).all()
+        #     for self_axes, mesh_axes in zip(self._axes, mesh.axes)
+        # )
 
     def is_overlapping(self, mesh):
         """
@@ -336,7 +410,7 @@ class CartesianMesh:
         bool
             True if all cell widths are constant within tolerance along each axis.
         """
-        return all(np.allclose(d[1:], d[0], atol=FLOATING_MESH_PRECISION) for d in self.deltas)
+        return all([np.allclose(d[1:], d[0], atol=ATOL_FLOATING_MESH_PRECISION) for d in self.deltas])
 
     def copy(self):
         """
@@ -580,16 +654,20 @@ class CartesianMesh:
         """Check equality between two meshes."""
         if not isinstance(value, CartesianMesh):
             return False
-        if self._ndim != value.ndim:
+        if self._ndim != value.ndim or self.shape != value.shape:
             return False
         return all(np.allclose(a, b, atol=ATOL_FLOATING_MESH_PRECISION) for a, b in zip(self._axes, value._axes))
 
     def __repr__(self) -> str:
         """Text representation of the mesh."""
-        string = f"{type(self).__name__} {self.shape}:\n"
-        for i, ax in enumerate(self._axes):
-            string += f"x{i}: {ax}\n"
-        return string
+        string = f"{type(self).__name__} {self.name} {self.shape}:\n"
+        if self.axes_names:
+            for name, ax in zip(self.axes_names, self._axes):
+                string += f"{name}: {ax}\n"
+        else:
+            for i, ax in enumerate(self._axes):
+                string += f"x{i}: {ax}\n"
+        return string[:-1]
 
 
 def merge_meshes(*meshes):

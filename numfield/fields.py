@@ -97,6 +97,67 @@ class CartesianField(np.lib.mixins.NDArrayOperatorsMixin):
         ''' Create a field where its values are the volume of the mesh '''
         return cls(name, mesh, mesh.volumes, False)
 
+    @classmethod
+    def from_array(cls, name, values, steps, intensive, origin=None, axes_names=None):
+        """
+        Construct a CartesianField from raw numpy array.
+
+        Convenience constructor that creates both mesh and field from an array,
+        automatically inferring mesh parameters from the array shape and provided
+        origin/steps parameters.
+
+        Parameters
+        ----------
+        name : str
+            Name of the field.
+        values : array-like
+            array of field values.
+        intensive : bool
+            Whether the field represents an intensive quantity (True) or 
+            extensive (False).
+        steps : list of float
+            Step size (cell width) along each axis. Must match the number of
+            dimensions in `values`.
+        origin : tuple of float, default origin is set to 0
+            Physical coordinates of the lower corner (minimum bounds) of the mesh.
+        axes_names : list of str, optional
+            Names for the three axes. If None, uses default.
+
+        Returns
+        -------
+        CartesianField
+            New field with automatically constructed mesh.
+
+        Raises
+        ------
+        ValueError
+            If `steps` length does not match the number of dimensions in `values`.
+
+        See Also
+        --------
+
+        Examples
+        --------
+        >>> from numfield import CartesianField
+        >>> import numpy as np
+        >>> arr = np.random.rand(10, 20, 30)
+        >>> field = CartesianField.from_array("temperature", arr, [1., 2., 3.], True)
+        >>> print(field.mesh.shape)
+        (10, 20, 30)
+        
+        """
+        values = np.asarray(values)
+
+        if len(steps) != values.ndim:
+            raise ValueError(f"Steps length ({len(steps)}) does not match values dimensions ({values.ndim})")
+
+        origin = np.zeros(values.ndim) if origin is None else origin
+        stops = [o + s * (n + 0.5) for o, s, n in zip(origin, steps, values.shape)]
+        
+        mesh = CartesianMesh.from_arange(starts=list(origin), stops=stops, steps=list(steps), axes_names=axes_names)
+        
+        return cls(name, mesh, values, intensive)
+
     ### Export and import to/from hdf format
     def to_hdf_group(self, parent_group):
         """Write this field into an existing HDF5 group."""
@@ -400,6 +461,95 @@ class CartesianField(np.lib.mixins.NDArrayOperatorsMixin):
 
         return descriptive_stats
 
+    def histogram(self, bins=10, range=None, weights=None, density=False):
+        """
+        Compute a histogram of field values.
+
+        Computes the histogram of field values with optional weighting by cell volumes
+        for extensive fields. NaN values are automatically excluded from the histogram.
+
+        Parameters
+        ----------
+        bins : int or sequence of scalars or str, optional
+            If an integer, the number of equal-width bins to use (default: 10).
+            If a sequence, defines the bin edges directly (must be monotonically increasing).
+            If a string, one of numpy's bin selection methods ('auto', 'fd', 'doane', 
+            'scott', 'stone', 'rice', 'sturges', 'sqrt').
+        range : tuple (float, float), optional
+            The lower and upper range of the bins. Values outside this range are 
+            considered outliers and counted in the overflow/underflow bins. If None,
+            uses (min(values), max(values)).
+        weights : array-like or str, optional
+            Weights for each cell. If None:
+                - For extensive fields: uses cell volumes as weights
+                - For intensive fields: no weighting (each cell equally weighted)
+            If 'volume', explicitly uses cell volumes regardless of field type.
+            If array-like, must have same shape as field values.
+        density : bool, default=False
+            If True, returns the probability density function (histogram normalized
+            such that the integral over the range is 1). If False, returns counts
+            (or weighted sum if weights are provided).
+
+        Returns
+        -------
+        counts : ndarray
+            The values of the histogram. Shape depends on bins parameter.
+        bin_edges : ndarray
+            Return the bin edges (length(counts)+1).
+
+        Raises
+        ------
+        ValueError
+            If bins is not a valid integer, sequence, or string method.
+            If range is not a tuple of two numbers with range[0] < range[1].
+            If weights shape does not match field values shape.
+
+        See Also
+        --------
+        numpy.histogram : Equivalent NumPy function
+        describe : Statistical description of field values
+
+        Examples
+        --------
+        >>> from numfield import CartesianField, CartesianMesh
+        >>> import numpy as np
+        >>> mesh = CartesianMesh([1.0, 1.0, 1.0], [2.0, 2.0, 2.0])
+        >>> field = CartesianField("temperature", mesh, np.random.rand(*mesh.shape), intensive=True)
+        >>> counts, edges = field.histogram(bins=5)
+        >>> print(f"Bin edges: {edges}")
+        Bin edges: [0.1 0.3 0.5 0.7 0.9 1.0]
+        
+        For extensive fields (e.g., mass), weighting by volume is automatic:
+        >>> density_field = CartesianField("density", mesh, np.ones(mesh.shape), intensive=True)
+        >>> mass_field = density_field.to_extensive()
+        >>> counts, edges = mass_field.histogram(bins=3, weights='volume')
+        
+        Using density to get probability distribution:
+        >>> pdf, edges = field.histogram(bins=10, density=True)
+        """
+        values_flat = self.values.ravel()
+        mask = ~np.isnan(values_flat)
+        valid_values = values_flat[mask]
+        
+        if weights is None:
+            sample_weights = self.mesh.volumes.ravel()[mask] if not self.intensive else None
+        elif isinstance(weights, str) and weights.lower() == 'volume':
+            sample_weights = self.mesh.volumes.ravel()[mask]
+        elif hasattr(weights, '__array__'):
+            weights_array = np.asarray(weights)
+            if weights_array.shape != self.values.shape:
+                raise ValueError(
+                    f"Weights shape {weights_array.shape} does not match field shape {self.values.shape}"
+                )
+            sample_weights = weights_array.ravel()[mask]
+        else:
+            sample_weights = None
+        
+        counts, bin_edges = np.histogram(valid_values, bins=bins, range=range, 
+                                          weights=sample_weights, density=density)
+        
+        return counts, bin_edges
+
     ### field comparison
     def __len__(self):
         """Number of elements along the first axis."""
@@ -502,6 +652,12 @@ class CartesianField(np.lib.mixins.NDArrayOperatorsMixin):
         ):
             raise ValueError(f'Projection is non-sensical because {self.name} is not numeric and one of both mesh is not a submesh of the other')
         
+
+        if weights is not None:
+            weights = weights.values if isinstance(weights, CartesianField) else weights
+            if weights.shape != self.shape:
+                raise ValueError(f'weights ({weights.shape}) and {self} must have the same shape ({self.shape})')
+
         # target mesh dimension is smaller than the current one
         if target_mesh.ndim < self.mesh.ndim:
             mesh_proj = self.mesh.projected_on(target_mesh)
@@ -630,6 +786,159 @@ class CartesianField(np.lib.mixins.NDArrayOperatorsMixin):
         intensive_field = self / self.mesh.volumes
         intensive_field.intensive = True
         return intensive_field
+
+    def extract_roi(self, bounds, *, inclusive=True):
+        """
+        Extract a region of interest (ROI) from the field by coordinate bounds.
+
+        Creates a new CartesianField containing only the cells whose centers fall
+        within the specified coordinate bounds. The resulting field maintains the
+        same intensive/extensive property and has a mesh cropped to the ROI.
+
+        Parameters
+        ----------
+        bounds : dict or tuple
+            Coordinate bounds for the ROI. Can be specified as:
+            
+            - Dict: {axis_name_or_index: (min_coord, max_coord), ...}
+              Example: {'x': (0.5, 2.0), 'z': (0.0, 1.5)} or {0: (0.5, 2.0), 2: (0.0, 1.5)}
+              Axes not specified are kept in full.
+            
+            - Tuple: ((x_min, x_max), (y_min, y_max), (z_min, z_max), ...)
+              Must have same length as field dimensionality.
+              Use None for unlimited bounds: (0.5, None) means x >= 0.5
+        
+        inclusive : bool, default=True
+            If True, include cells whose centers are exactly on the boundary.
+            If False, exclude boundary cells (strict inequality).
+
+        Returns
+        -------
+        CartesianField
+            New field containing only the ROI. The mesh is cropped to match
+            the selected region.
+
+        Raises
+        ------
+        ValueError
+            If bounds format is invalid or inconsistent with field dimensionality.
+            If min > max for any bound.
+            If no cells fall within the specified bounds.
+
+        See Also
+        --------
+        __getitem__ : Index-based slicing
+        mask_field : Create masked field based on criteria
+
+        Examples
+        --------
+        Extract a sub-region using coordinate bounds:
+        
+        >>> from numfield import CartesianField, CartesianMesh
+        >>> import numpy as np
+        >>> mesh = CartesianMesh.from_linspace([0, 0, 0], [10, 10, 10], [21, 21, 21])
+        >>> field = CartesianField("pressure", mesh, np.random.rand(*mesh.shape), intensive=True)
+        
+        Extract region where x is between 3 and 7, y is between 2 and 8:
+        >>> roi = field.extract_roi({'x': (3, 7), 'y': (2, 8)})
+        >>> print(roi.mesh.shape)
+        (9, 13, 20)
+        
+        Using tuple notation for all dimensions:
+        >>> roi = field.extract_roi(((3, 7), (2, 8), (0, 5)))
+        
+        Partial bounds (unlimited on one side):
+        >>> roi = field.extract_roi({'x': (5, None)})
+        
+        Using axis indices instead of names:
+        >>> roi = field.extract_roi({0: (3, 7), 2: (0, 5)})
+        
+        Exclusive bounds (strict inequality):
+        >>> roi = field.extract_roi({'x': (3, 7)}, inclusive=False)
+        """
+        ndim = self.ndim
+        
+        if isinstance(bounds, dict):
+            slices = [slice(None)] * ndim
+            
+            for axis, (lower, upper) in bounds.items():
+                if isinstance(axis, str):
+                    if self.mesh.axes_names is None:
+                        raise ValueError(f"Mesh has no axis names, cannot use string axis '{axis}'")
+                    try:
+                        axis_idx = self.mesh.axes_names.index(axis)
+                    except ValueError:
+                        raise ValueError(f"Axis '{axis}' not found in mesh axes {self.mesh.axes_names}")
+                elif isinstance(axis, int):
+                    if not (0 <= axis < ndim):
+                        raise ValueError(f"Axis index {axis} out of range for {ndim}D field")
+                    axis_idx = axis
+                else:
+                    raise TypeError(f"Axis must be string or int, got {type(axis)}")
+                
+                if lower is not None and upper is not None and lower > upper:
+                    raise ValueError(f"Lower bound ({lower}) cannot be greater than upper bound ({upper})")
+                
+                axis_centers = self.mesh.centers[axis_idx]
+                
+                if inclusive:
+                    if lower is not None:
+                        mask_lower = axis_centers >= lower
+                    else:
+                        mask_lower = np.ones_like(axis_centers, dtype=bool)
+                        
+                    if upper is not None:
+                        mask_upper = axis_centers <= upper
+                    else:
+                        mask_upper = np.ones_like(axis_centers, dtype=bool)
+                else:
+                    if lower is not None:
+                        mask_lower = axis_centers > lower
+                    else:
+                        mask_lower = np.ones_like(axis_centers, dtype=bool)
+                        
+                    if upper is not None:
+                        mask_upper = axis_centers < upper
+                    else:
+                        mask_upper = np.ones_like(axis_centers, dtype=bool)
+                
+                valid_mask = mask_lower & mask_upper
+                
+                other_axes = tuple(i for i in range(ndim) if i != axis_idx)
+                if other_axes:
+                    reduce_axes = tuple(i for i in range(valid_mask.ndim) if i != axis_idx)
+                    valid_along_axis = valid_mask.any(axis=reduce_axes)
+                else:
+                    valid_along_axis = valid_mask
+                
+                valid_indices = np.where(valid_along_axis)[0]
+                
+                if len(valid_indices) == 0:
+                    raise ValueError(f"No cells found within bounds for axis {axis}")
+                
+                start_idx = valid_indices[0]
+                stop_idx = valid_indices[-1] + 1
+                slices[axis_idx] = slice(start_idx, stop_idx)
+            
+            return self[tuple(slices)]
+        
+        elif isinstance(bounds, tuple):
+            if len(bounds) != ndim:
+                raise ValueError(
+                    f"Bounds tuple length ({len(bounds)}) must match field dimension ({ndim})"
+                )
+            
+            bounds_dict = {}
+            for i, (lower, upper) in enumerate(bounds):
+                if lower is not None or upper is not None:
+                    bounds_dict[i] = (lower, upper)
+            
+            return self.extract_roi(bounds_dict, inclusive=inclusive)
+        
+        else:
+            raise TypeError(
+                f"bounds must be dict or tuple, got {type(bounds)}"
+            )
 
     ### representation methods
     def plot_1D(self, ax=None):
@@ -897,7 +1206,21 @@ class Fields:
         self.mesh = mesh
         self.fields: dict[str, CartesianField] = {}
         self.field_lookup: dict[str, np.ndarray] = {}
-
+        self.masks: dict[str, np.ndarray] = {}
+    
+    def add_mask(self, name: str, mask: np.ndarray):
+        """Add a boolean mask field"""
+        self.masks[name] = mask
+    
+    def get_mask(self, name: str) -> np.ndarray:
+        """Get mask as numpy array"""
+        return self.masks[name]
+    
+    def apply_mask(self, field_name: str, mask_name: str, value=np.nan):
+        """Apply a mask to a field, returning masked values"""
+        field = self[field_name]
+        mask = self.get_mask(mask_name)
+        return np.where(mask, field.values, value)
     @classmethod
     def from_field(cls, field: CartesianField):
         """
@@ -1041,7 +1364,7 @@ class Fields:
     ### field manipulation
     def rot90(self, nb_rotation: int, axes: tuple[int, int]= (0,1)):
         """
-        Rotate the mesh and all contained fields.
+        Rotate the mesh and all contained fields. This acts inplace.
 
         Parameters
         ----------
@@ -1055,6 +1378,22 @@ class Fields:
             # numpy rotate in the anti-trigonometric direction, see Field.rot90 method for more explanation
             field.values = np.rot90(field.values, k=-nb_rotation, axes=axes)
 
+    def project_on(self, target_mesh: CartesianMesh, weights=None):
+        """
+        change the mesh and project all contained fields onto it. This acts inplace.
+
+        Parameters
+        ----------
+        target_mesh : CartesianMesh
+            mesh to project on
+        weights : CartesianField or numpy array (optional)
+            weights to use in the projection, see also CartesianField.project_on
+        """
+        self.mesh = target_mesh
+        for name in self.fields:
+            self.fields[name] = self.fields[name].project_on(target_mesh, weights)
+
+    ### Export and import to/from hdf format
     def to_hdf_group(self, parent_group):
         """
         Write the Fields container (mesh, fields, and lookup tables) into an existing HDF5 group.
@@ -1255,4 +1594,3 @@ def compare_fields(field_ref: CartesianField, field_2: CartesianField, relative=
         relative_gap = 100* np.divide(diff, field_ref.values, out=np.zeros_like(field_ref.values),where=field_ref.values!=0)
         return CartesianField(f"({field_2.name} - {field_ref.name}) / {field_ref.name} (%)", field_ref.mesh, relative_gap, field_ref.intensive)
     return CartesianField(f"({field_2.name} - {field_ref.name})", field_ref.mesh, diff, field_ref.intensive)
-

@@ -42,7 +42,7 @@ pip install -e ".[dev]"
 
 ```python
 import numpy as np
-from field import CartesianMesh, CartesianField, Fields
+from numfield import CartesianMesh, CartesianField, Fields
 
 # Create a 2D mesh
 mesh = CartesianMesh([1., 1.], [2., 2.], [5., 1., 4.])  # deltas (here x, y and z)
@@ -70,7 +70,7 @@ loaded_field = CartesianField.from_hdf("output.h5")
 ### Working with multiple fields
 
 ```python
-from field import Fields
+from numfield import Fields
 
 # Create a container for multiple fields
 fields = Fields(mesh)
@@ -85,10 +85,11 @@ temp_field = fields["temperature"]
 
 ```python
 # Project a field onto a different mesh
-target_mesh = CartesianMesh([0, 0], [2, 2], [20, 20])
+target_mesh = CartesianMesh.from_linspace([0, 0], [2, 2], [20, 20])
 projected_field = temp_field.project_on(target_mesh)
 
 # Merge multiple fields from different regions
+from numfield import merge_fields
 combined_field = merge_fields("combined", field1, field2, field3)
 ```
 
