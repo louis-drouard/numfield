@@ -137,7 +137,6 @@ class CartesianMesh:
         """
 
         rounded_unique_axes = tuple(np.unique(np.round(ax,8)) for ax in axes)
-        print(name)
         return cls(*tuple(np.diff(ax) for ax in rounded_unique_axes), origin=tuple(ax[0] for ax in rounded_unique_axes), axes_names=axes_names, name=name) # type: ignore
 
     @classmethod

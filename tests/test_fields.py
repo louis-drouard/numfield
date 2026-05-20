@@ -204,6 +204,13 @@ def test_field_projection(fine_field, coarse_mesh):
         [[0.5, 0.5], [3.5/3, 3.5/3]],
         [[5.5/3, 5.5/3], [2.5, 2.5]]
         ])
+    
+def test_extensive_field_projection():
+    values = np.ones((2,2))
+    field = CartesianField.from_array('extensive', values,[1., 1.], intensive=False)
+    mesh = CartesianMesh.from_arange([0., 0.], [2.1, 2.1], [0.5, 0.5])
+    extensive_projection = field.project_on(mesh)
+    assert_allclose(extensive_projection.values, np.full((4,4), 0.25))
 
 def test_fields_construction(coarse_mesh, coarse_field, fine_field):
     fields = Fields(coarse_mesh)
@@ -231,6 +238,12 @@ def test_fields_construction(coarse_mesh, coarse_field, fine_field):
 
     # test data_names attribute
     assert fields.data_names == set(['coarse', 'toto', 'test'])
+
+def test_apply_mask():
+    values = np.ones((3,3))
+    field = CartesianField.from_array('masked', values, [1., 1.], False)
+    masked_field = field.apply_mask(np.array([[0, 0, 0], [0, 1, 0], [0, 0, 0]]))
+    assert_allclose(masked_field.sum(), 8.)
 
 def test_categorical_field(coarse_field):
     fields = Fields.from_field(coarse_field)

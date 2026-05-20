@@ -9,6 +9,7 @@ import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib.widgets import Slider
 import numpy as np
+import numpy.ma as ma
 import h5py
 
 # standard imports
@@ -81,8 +82,9 @@ class CartesianField(np.lib.mixins.NDArrayOperatorsMixin):
         if not isinstance(mesh ,CartesianMesh):
             raise TypeError(f"mesh argument must be of type {CartesianMesh} not {type(mesh)}")
 
-        values = np.asarray(values)
-
+        if not isinstance(values, ma.MaskedArray):
+            values = np.asarray(values)
+        
         # Check that the field shape matches the number of cells (not nodes)
         if values.shape != mesh.shape:
             raise ValueError(f"Field shape {values.shape} does not match mesh shape {mesh.shape} for cells.")
@@ -146,7 +148,8 @@ class CartesianField(np.lib.mixins.NDArrayOperatorsMixin):
         (10, 20, 30)
         
         """
-        values = np.asarray(values)
+        if not isinstance(values, ma.MaskedArray):
+            values = np.asarray(values)
 
         if len(steps) != values.ndim:
             raise ValueError(f"Steps length ({len(steps)}) does not match values dimensions ({values.ndim})")
@@ -192,6 +195,13 @@ class CartesianField(np.lib.mixins.NDArrayOperatorsMixin):
             # we assume the field group is the first and only one
             group_name = next(iter(f.keys()))
             return cls.from_hdf_group(f[group_name])
+
+    def apply_mask(self, mask: np.ndarray)->'CartesianField':
+        """Apply a mask to a field, returning a new CartesianField with a numpy masked array as values"""
+        if mask.shape != self.shape:
+            raise ValueError(f"mask shape {mask.shape} does not match mesh/values shape {self.shape}")
+        masked_values = ma.array(self.values, mask=mask)
+        return CartesianField(self.name, self.mesh, masked_values, self.intensive)
 
     # --------------------------
     # NumPy protocol integration
@@ -652,6 +662,8 @@ class CartesianField(np.lib.mixins.NDArrayOperatorsMixin):
         ):
             raise ValueError(f'Projection is non-sensical because {self.name} is not numeric and one of both mesh is not a submesh of the other')
         
+        if isinstance(self.values, ma.MaskedArray):
+            logger.warning('Projection on MaskedArray is not supported, any mask information will be ignored and lost.')
 
         if weights is not None:
             weights = weights.values if isinstance(weights, CartesianField) else weights
@@ -671,7 +683,7 @@ class CartesianField(np.lib.mixins.NDArrayOperatorsMixin):
             intensive=self.intensive,
             weights=weights
             )        
-        target_field = CartesianField(self.name, mesh_proj, target_values, self.intensive)
+        target_field = CartesianField(self.name, mesh_proj, np.round(target_values, FLOATING_FIELD_PRECISION), self.intensive)
         
         return target_field
 
@@ -1220,7 +1232,8 @@ class Fields:
         """Apply a mask to a field, returning masked values"""
         field = self[field_name]
         mask = self.get_mask(mask_name)
-        return np.where(mask, field.values, value)
+        return field.apply_mask(mask)
+    
     @classmethod
     def from_field(cls, field: CartesianField):
         """

@@ -23,6 +23,10 @@ Examples
 
 import numpy as np
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 def build_1D_transfer_matrix(src_mesh: np.ndarray, dest_mesh: np.ndarray, intensive=True) -> np.ndarray:
     """
     Build a 1D transfer matrix to project data from one mesh to another
@@ -133,32 +137,53 @@ def project_ND(src_mesh, src_values, target_mesh, weights=None, intensive=True):
         raise ValueError(f"src_mesh (type={type(src_mesh)}) must be a tuple of length N containing mesh dimensions (X0, X1, X2, ..., XN)")
     if not isinstance(target_mesh, tuple):
         raise ValueError(f"target_mesh (type={type(target_mesh)}) must be a tuple of length N containing mesh dimensions (X0, X1, X2, ..., XN)")
-    if len(src_mesh) != len(target_mesh) != len(src_values.shape):
+    if not (len(src_mesh) == len(target_mesh) == len(src_values.shape)):
         raise ValueError(f"src_mesh (dim={len(src_mesh)}), src_values (dim={len(src_values)}) and target_mesh (dim={len(target_mesh)}) must be of the same dimension")
-    
 
-    # Handle weights
-    if weights is not None:
-        if weights.shape != src_values.shape:
-            raise ValueError(f"weights {weights.shape} must have the same shape as src_values {src_values.shape}")
-        # Normalize weights to sum to 1 per cell? Not required — just use as-is.
-        # compute weighted integral and weighted total mass
-        src_weighted = src_values * weights
-        total_weight_target = weights         # to be projected
-    else:
-        src_weighted = src_values
-        total_weight_target = np.ones_like(src_values)
+    if weights is not None and not intensive:
+        logger.warning("Weighted projection is ambiguous for extensive fields.")
 
     transfer_matrices = [build_1D_transfer_matrix(src, trgt, intensive=intensive) for src, trgt in zip(src_mesh, target_mesh)]
+    import numpy.ma as ma
+    transfer_matrices = [ma.array(mat) for mat in transfer_matrices]
 
-    # Project weighted field and total weight
-    for mat in transfer_matrices:
-        src_weighted = np.tensordot(src_weighted, mat, axes=(0, 0))
-        total_weight_target = np.tensordot(total_weight_target, mat, axes=(0, 0))
+    def apply_projection(values):
+        out = values
+        for axis, mat in enumerate(transfer_matrices):
+            out = np.tensordot(out, mat, axes=(axis, 0))
+            # replace target axis
+            out = np.moveaxis(out, -1, axis)
+        return out
 
-    # Final result: weighted average
-    # Avoid division by zero
-    target_values = np.divide(src_weighted, total_weight_target, out=np.zeros_like(src_weighted), where=total_weight_target != 0)
+    if weights is None:
+        target_values = apply_projection(src_values)
+        return target_values
+
+    if weights.shape != src_values.shape:
+        raise ValueError(f"weights {weights.shape} must have the same shape as src_values {src_values.shape}")
+    # Normalize weights to sum to 1 per cell? Not required — just use as-is.
+    # compute weighted integral and weighted total mass
+    src_weighted = src_values * weights
+
+    projected_weighted_values = apply_projection(src_weighted)
+    projected_weights = apply_projection(weights)
+
+    # with np.errstate(divide='ignore', invalid='ignore'):
+    target_values = np.divide(
+        projected_weighted_values,
+        projected_weights,
+        out=np.zeros_like(projected_weighted_values),
+        where=projected_weights != 0
+    )
 
     return target_values
+
+    ### original functionning, without weights projection:
+    # transfer_matrices = [build_1D_transfer_matrix(src, trgt, intensive=intensive) for src, trgt in zip(src_mesh, target_mesh)]
+    # target_values = src_values
+    # for mat in transfer_matrices:
+    #     target_values = np.tensordot(target_values, mat, axes=(0,0))
+    # return target_values
+
+
 
