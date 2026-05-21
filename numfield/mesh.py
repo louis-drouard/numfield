@@ -595,6 +595,8 @@ class CartesianMesh:
         parent_group.create_dataset("origin", data=self.origin)
         parent_group.create_dataset("axes_names", data=self.axes_names)
         parent_group.create_dataset("shape", data=self.shape)
+        if self.name:
+            parent_group.create_dataset("name", data=self.name)
         axes_grp = parent_group.create_group("axes")
         for i, ax in enumerate(self.axes):
             axes_grp.create_dataset(f"axis_{i}", data=ax)
@@ -616,7 +618,11 @@ class CartesianMesh:
             The reconstructed mesh.
         """
         axes = [group["axes"][f"axis_{i}"][:] for i in range(len(group["shape"]))]
-        return cls.from_axes(*axes, axes_names=[an.decode('utf-8') for an in group["axes_names"]] if "axes_names" in group else None)
+        return cls.from_axes(
+            *axes,
+            axes_names=[an.decode('utf-8') for an in group["axes_names"]] if "axes_names" in group else None,
+            name=group["name"].decode('utf-8') if "name" in group else ""
+        )
 
     def to_hdf(self, filename):
         """

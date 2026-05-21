@@ -15,11 +15,26 @@ Examples
 >>> from field.plotting import _get_norm, get_comparaison_cmap
 >>> norm = _get_norm(vmin=0, vmax=100, vcenter=None, cbar_nb_levels=None, cmap='viridis')
 >>> cmap = get_comparaison_cmap(N=256)  # Blue-White-Red diverging colormap
+
+Note
+----
+This module requires matplotlib. Install it with: pip install numfield[all]
 """
 
-from matplotlib.colors import BoundaryNorm, TwoSlopeNorm, Normalize
-import matplotlib.colors as mcolors
 import numpy as np
+
+
+def _check_matplotlib():
+    """Check if matplotlib is available and raise ImportError if not."""
+    try:
+        from matplotlib.colors import BoundaryNorm, TwoSlopeNorm, Normalize
+        import matplotlib.colors as mcolors
+        return BoundaryNorm, TwoSlopeNorm, Normalize, mcolors
+    except ImportError:
+        raise ImportError(
+            "matplotlib is required for plotting utilities. "
+            "Install it with: pip install numfield[all]"
+        )
 
 def _get_norm(vmin, vmax, vcenter, cbar_nb_levels, cmap):
     """
@@ -60,6 +75,7 @@ def _get_norm(vmin, vmax, vcenter, cbar_nb_levels, cmap):
           unless `vcenter` is specified, in which case a `TwoSlopeNorm`
           is used for diverging data.
     """
+    BoundaryNorm, TwoSlopeNorm, Normalize, _ = _check_matplotlib()
 
     if cbar_nb_levels is not None:
         # discrete bins
@@ -84,6 +100,7 @@ def _get_norm(vmin, vmax, vcenter, cbar_nb_levels, cmap):
     return norm
 
 def get_comparaison_cmap(N=100):
+    _, _, _, mcolors = _check_matplotlib()
     colors = ['blue', 'white', 'red']
     n_bins = 100
     return mcolors.LinearSegmentedColormap.from_list('RdBu_white', colors, N=n_bins)

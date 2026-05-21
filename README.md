@@ -8,7 +8,7 @@ A structured cartesian mesh field representation for scientific computing.
 
 ## Features
 
-- **N-dimensional Cartesian meshes**: Support for 1D, 2D, and 3D structured grids
+- **N-dimensional Cartesian meshes**: Support for structured grids
 - **NumPy integration**: Full compatibility with NumPy ufuncs and array operations
 - **Intensive/extensive quantities**: Proper handling of different field types
 - **HDF5 I/O**: Save and load fields and mesh data to/from HDF5 files
@@ -21,21 +21,31 @@ A structured cartesian mesh field representation for scientific computing.
 ### From PyPI (recommended)
 
 ```bash
+pip install numfield[all]
+```
+
+This installs the package with all optional dependencies including matplotlib for visualization features.
+
+### Basic installation
+
+```bash
 pip install numfield
 ```
+
+This installs the core package without plotting dependencies. Visualization methods will be unavailable.
 
 ### From source
 
 ```bash
 git clone https://github.com/louis-drouard/numfield.git
 cd numfield
-pip install -e .
+pip install ".[all]"
 ```
 
 ### Development installation
 
 ```bash
-pip install -e ".[dev]"
+pip install ".[dev]"
 ```
 
 ## Quick Start
@@ -117,10 +127,15 @@ field_3d.plot(axis=2, dynamic_colorbar=True, display_edges=False)
 
 ## Requirements
 
+### Core dependencies
+
 - Python >= 3.10
 - NumPy >= 1.26.4
-- matplotlib
 - h5py
+
+### Optional dependencies
+
+- matplotlib (for visualization features, included in `[all]` extra)
 
 ## Development
 

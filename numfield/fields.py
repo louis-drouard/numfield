@@ -1,13 +1,9 @@
 # local imports
 from .mesh import CartesianMesh, merge_meshes
-from .plotting import _get_norm
 from .projection import project_ND
 from .utils import slice_to_str
 
 # external imports
-import matplotlib
-import matplotlib.pyplot as plt
-from matplotlib.widgets import Slider
 import numpy as np
 import numpy.ma as ma
 import h5py
@@ -197,7 +193,7 @@ class CartesianField(np.lib.mixins.NDArrayOperatorsMixin):
             return cls.from_hdf_group(f[group_name])
 
     def apply_mask(self, mask: np.ndarray)->'CartesianField':
-        """Apply a mask to a field, returning a new CartesianField with a numpy masked array as values"""
+        """Apply a mask returning a new CartesianField with a numpy MaskedArray as values"""
         if mask.shape != self.shape:
             raise ValueError(f"mask shape {mask.shape} does not match mesh/values shape {self.shape}")
         masked_values = ma.array(self.values, mask=mask)
@@ -971,9 +967,20 @@ class CartesianField(np.lib.mixins.NDArrayOperatorsMixin):
 
         Raises
         ------
+        ImportError
+            If matplotlib is not installed.
         ValueError
             If the field is not 1-dimensional.
         """
+        try:
+            import matplotlib
+            import matplotlib.pyplot as plt
+        except ImportError:
+            raise ImportError(
+                "matplotlib is required for plotting. "
+                "Install it with: pip install numfield[all]"
+            )
+
         if ax is None:
             fig, ax = plt.subplots()
         else:
@@ -1044,6 +1051,17 @@ class CartesianField(np.lib.mixins.NDArrayOperatorsMixin):
         if self.ndim == 1:
             fig, ax = self.plot_1D(ax=ax)
             return fig, ax
+        
+        try:
+            import matplotlib
+            import matplotlib.pyplot as plt
+            from matplotlib.widgets import Slider
+            from .plotting import _get_norm
+        except ImportError:
+            raise ImportError(
+                "matplotlib is required for plotting. "
+                "Install it with: pip install numfield[all]"
+            )
         
         # Extract initial data slice
         if self.ndim == 2:
@@ -1228,8 +1246,12 @@ class Fields:
         """Get mask as numpy array"""
         return self.masks[name]
     
+    def del_mask(self, name: str):
+        """Delete the mask"""
+        del self.masks[name]
+
     def apply_mask(self, field_name: str, mask_name: str, value=np.nan):
-        """Apply a mask to a field, returning masked values"""
+        """Apply the mask mask_name to the field field_name, return the resulting CartesianField"""
         field = self[field_name]
         mask = self.get_mask(mask_name)
         return field.apply_mask(mask)
@@ -1507,7 +1529,8 @@ class Fields:
 
     def __repr__(self):
         """String representation of the container."""
-        return f"Fields(shape={self.mesh.shape}, fields={self.data_names})"
+        string = f"Fields(shape={self.mesh.shape}, fields={self.data_names})"
+        return string
 
 
 def merge_fields(name:str, *fields:CartesianField):

@@ -9,6 +9,128 @@ import packaging
 def test_field_mesh_consistency(coarse_field):
     assert coarse_field.values.shape == coarse_field.mesh.shape
 
+def test_rot90(coarse_field):
+    rot_field = coarse_field.rot90(1, (0,1))
+    assert rot_field.mesh == coarse_field.mesh.rot90(1, (0,1))
+    assert_allclose(rot_field.values, np.rot90(coarse_field, -1, (0,1)))
+    assert_allclose(rot_field.values, np.rot90(coarse_field.values, -1, (0,1)))
+
+def test_fields_construction(coarse_mesh, coarse_field, fine_field):
+    fields = Fields(coarse_mesh)
+    # check that all meshes are the same to unbias the following tests (who knows what fixture really do)
+    assert id(coarse_mesh) == id(coarse_field.mesh) == id(fields.mesh)
+
+    # test from_field and add_value
+    fields = Fields.from_field(coarse_field)
+    fields.add_values('test', coarse_field.values, False)
+    assert 'test' in fields.fields
+    assert 'coarse' in fields.fields
+
+    # not the same mesh
+    with pytest.raises(ValueError):
+        fields.add_field(fine_field)
+    coarse_field_deepcopy = coarse_field.copy()
+    with pytest.raises(ValueError):
+        fields.add_field(coarse_field_deepcopy)
+
+    # Test __setitem__
+    coarse_field_deepcopy.mesh = coarse_field.mesh
+    coarse_field_deepcopy.name = "toto"
+    fields['toto'] = coarse_field_deepcopy
+    assert 'toto' in fields.fields
+
+    # test data_names attribute
+    assert fields.data_names == set(['coarse', 'toto', 'test'])
+
+def test_apply_mask():
+    values = np.ones((3,3))
+    field = CartesianField.from_array('masked', values, [1., 1.], False)
+    masked_field = field.apply_mask(np.array([[0, 0, 0], [0, 1, 0], [0, 0, 0]]))
+    assert_allclose(masked_field.sum(), 8.)
+
+def test_categorical_field(coarse_field):
+    fields = Fields.from_field(coarse_field)
+    cat_values = [[['TOTO'], ['TITI']], [['TUTU'], ['TATA']]]
+    cat_field = CartesianField('category_as_field', coarse_field.mesh, cat_values, intensive=True)
+    fields.add_field(cat_field) # considered as a values field
+    fields.add_values('category', cat_values) # considered as a categorical field
+
+    # only 1 is considered a category
+    assert set(fields.field_lookup.keys()) == {'category'}
+    # the values of the categorical field are the index and 
+    assert_allclose(fields.fields['category'], [[[2], [1]], [[3], [0]]])
+    # careful with this test, as it can depends on the order (sorted may prove useful)
+    assert_array_equal(fields.field_lookup['category'], ['TATA', 'TITI', 'TOTO', 'TUTU'])
+    # but when accessed, both are equivalent
+    assert_array_equal(fields.fields['category_as_field'], cat_values)
+    assert_array_equal(fields['category'], cat_values)
+
+def test_sum_by_category():
+    # 10x10x5 Mesh
+    dx = np.full(10, 1.0)   # 10 cells along x
+    dy = np.full(10, 1.0)   # 10 cells along y
+    dz = np.full(5,  2.0)   # 5  cells along z
+
+    mesh = CartesianMesh(dx, dy, dz)
+    
+    Z = mesh.centers[2]   # center z-coordinates of the cells
+    density_values = 1000 + 10 * Z   # kg/m^3
+    density_field = CartesianField(
+        name="density",
+        mesh=mesh,
+        values=density_values,
+        intensive=True        # density → intensive
+    )
+
+    # Material field: water below z=5, steel above
+    material = np.where(Z < 5, "water", "steel")
+
+    fields = Fields(mesh)
+    fields.add_field(density_field)
+    fields.add_values("material", material)
+
+    labels, means = fields.sum_by_category("density", "material")
+    assert_allclose(means, [1070.00, 1020.00])
+
+def test_field_normalize(fine_field):
+    # Default normalization: sum should become 1
+    normalized = fine_field.normalize()
+    assert isinstance(normalized, CartesianField)
+    assert normalized.shape == fine_field.shape
+    assert normalized.intensive == fine_field.intensive
+    assert_allclose(normalized.sum(), 1.0, atol=1e-10)
+
+    # Normalize to a specific value (e.g., 5)
+    normalized_5 = fine_field.normalize(norm=5.0)
+    assert_allclose(normalized_5.sum(), 5.0, atol=1e-10)
+
+    # Check that scaling is consistent: normalized_5 should be 5x normalized
+    assert_allclose(normalized_5.values, 5 * normalized.values) 
+
+def test_field_to_extensive(fine_field):
+    extensive_values = [
+        [[0.,         0.        ],
+        [0.02777778, 0.02777778],
+        [0.05555555, 0.05555555]],
+
+        [[0.05555556, 0.05555556],
+        [0.08333334, 0.08333334],
+        [0.11111111, 0.11111111]],
+
+        [[1/9, 1/9],
+        [0.13888889, 0.13888889],
+        [0.16666666, 0.16666666]],
+    ]
+    assert_allclose(fine_field.to_extensive(), extensive_values)
+
+def test_field_to_intensive(fine_field):
+    extensive_field = fine_field.to_extensive()
+    assert_allclose(extensive_field.to_intensive(), fine_field)
+
+# ─────────────────────────────────────────────────────────────────
+# Numpy integration
+# ─────────────────────────────────────────────────────────────────
+
 def test_numpy_operation_on_field(coarse_field):
     
     values = coarse_field.values
@@ -181,11 +303,9 @@ def test_numpy_method_on_field(fine_field):
     # flatten
     assert_allclose(fine_field.flatten(), fine_field.values.flatten())
 
-def test_rot90(coarse_field):
-    rot_field = coarse_field.rot90(1, (0,1))
-    assert rot_field.mesh == coarse_field.mesh.rot90(1, (0,1))
-    assert_allclose(rot_field.values, np.rot90(coarse_field, -1, (0,1)))
-    assert_allclose(rot_field.values, np.rot90(coarse_field.values, -1, (0,1)))
+# ─────────────────────────────────────────────────────────────────
+# Projection tests
+# ─────────────────────────────────────────────────────────────────
 
 def test_field_projection(fine_field, coarse_mesh):
     fine_to_coarse = fine_field.project_on(coarse_mesh)
@@ -204,174 +324,13 @@ def test_field_projection(fine_field, coarse_mesh):
         [[0.5, 0.5], [3.5/3, 3.5/3]],
         [[5.5/3, 5.5/3], [2.5, 2.5]]
         ])
-    
+
 def test_extensive_field_projection():
     values = np.ones((2,2))
     field = CartesianField.from_array('extensive', values,[1., 1.], intensive=False)
     mesh = CartesianMesh.from_arange([0., 0.], [2.1, 2.1], [0.5, 0.5])
     extensive_projection = field.project_on(mesh)
     assert_allclose(extensive_projection.values, np.full((4,4), 0.25))
-
-def test_fields_construction(coarse_mesh, coarse_field, fine_field):
-    fields = Fields(coarse_mesh)
-    # check that all meshes are the same to unbias the following tests (who knows what fixture really do)
-    assert id(coarse_mesh) == id(coarse_field.mesh) == id(fields.mesh)
-
-    # test from_field and add_value
-    fields = Fields.from_field(coarse_field)
-    fields.add_values('test', coarse_field.values, False)
-    assert 'test' in fields.fields
-    assert 'coarse' in fields.fields
-
-    # not the same mesh
-    with pytest.raises(ValueError):
-        fields.add_field(fine_field)
-    coarse_field_deepcopy = coarse_field.copy()
-    with pytest.raises(ValueError):
-        fields.add_field(coarse_field_deepcopy)
-
-    # Test __setitem__
-    coarse_field_deepcopy.mesh = coarse_field.mesh
-    coarse_field_deepcopy.name = "toto"
-    fields['toto'] = coarse_field_deepcopy
-    assert 'toto' in fields.fields
-
-    # test data_names attribute
-    assert fields.data_names == set(['coarse', 'toto', 'test'])
-
-def test_apply_mask():
-    values = np.ones((3,3))
-    field = CartesianField.from_array('masked', values, [1., 1.], False)
-    masked_field = field.apply_mask(np.array([[0, 0, 0], [0, 1, 0], [0, 0, 0]]))
-    assert_allclose(masked_field.sum(), 8.)
-
-def test_categorical_field(coarse_field):
-    fields = Fields.from_field(coarse_field)
-    cat_values = [[['TOTO'], ['TITI']], [['TUTU'], ['TATA']]]
-    cat_field = CartesianField('category_as_field', coarse_field.mesh, cat_values, intensive=True)
-    fields.add_field(cat_field) # considered as a values field
-    fields.add_values('category', cat_values) # considered as a categorical field
-
-    # only 1 is considered a category
-    assert set(fields.field_lookup.keys()) == {'category'}
-    # the values of the categorical field are the index and 
-    assert_allclose(fields.fields['category'], [[[2], [1]], [[3], [0]]])
-    # careful with this test, as it can depends on the order (sorted may prove useful)
-    assert_array_equal(fields.field_lookup['category'], ['TATA', 'TITI', 'TOTO', 'TUTU'])
-    # but when accessed, both are equivalent
-    assert_array_equal(fields.fields['category_as_field'], cat_values)
-    assert_array_equal(fields['category'], cat_values)
-
-def test_sum_by_category():
-    # 10x10x5 Mesh
-    dx = np.full(10, 1.0)   # 10 cells along x
-    dy = np.full(10, 1.0)   # 10 cells along y
-    dz = np.full(5,  2.0)   # 5  cells along z
-
-    mesh = CartesianMesh(dx, dy, dz)
-    
-    Z = mesh.centers[2]   # center z-coordinates of the cells
-    density_values = 1000 + 10 * Z   # kg/m^3
-    density_field = CartesianField(
-        name="density",
-        mesh=mesh,
-        values=density_values,
-        intensive=True        # density → intensive
-    )
-
-    # Material field: water below z=5, steel above
-    material = np.where(Z < 5, "water", "steel")
-
-    fields = Fields(mesh)
-    fields.add_field(density_field)
-    fields.add_values("material", material)
-
-    labels, means = fields.sum_by_category("density", "material")
-    assert_allclose(means, [1070.00, 1020.00])
-
-def test_merge_fields():
-    dx = np.array([0.5, 0.5])
-    dy = np.array([0.5, 0.5])
-    mesh1 = CartesianMesh(dx, dy)    
-    values = [[0., 1.], [2., 3.]]
-    f1 = CartesianField('m1', mesh1, values, intensive=True)       
-    mesh2 = CartesianMesh(dx, dy, origin=(1,1))    
-    values = [[4., 5.], [6., 7.]]
-    f2 = CartesianField('m2', mesh2, values, intensive=True)
-    merged_field = merge_fields("merged", f1, f2)
-    
-    expected_values = [
-        [0., 1., 0., 0.],
-        [2., 3., 0., 0.],
-        [0., 0., 4., 5.],
-        [0., 0., 6., 7.]
-        ]
-
-    assert_allclose(merged_field.values, expected_values)
-    assert_allclose(merged_field.mesh.axes[0], [0., 0.5, 1., 1.5, 2.])
-    assert_allclose(merged_field.mesh.axes[1], [0., 0.5, 1., 1.5, 2.])
-
-def test_combine_overlapping_extensive_field():
-    dx = np.array([0.5, 0.5])
-    dy = np.array([0.5, 0.5])
-    mesh1 = CartesianMesh(dx, dy)    
-    values = [[0., 1.], [2., 3.]]
-    f1 = CartesianField('m1', mesh1, values, intensive=False)       
-    mesh2 = CartesianMesh(dx, dy, origin=(0.5,0))    
-    values = [[4., 5.], [6., 7.]]
-    f2 = CartesianField('m2', mesh2, values, intensive=False)
-    # overlapping cells are added (and normalized by cell volume to acccount for extensivity)
-    combined_field = merge_fields("combined", f1, f2) 
-    assert_allclose(combined_field.values, [[0., 1.], [6., 8.], [6., 7.]])
-    
-def test_combine_overlapping_intensive_field():
-    dx = np.array([0.5, 0.5])
-    dy = np.array([0.5, 0.5])
-    mesh1 = CartesianMesh(dx, dy)    
-    values = [[0., 1.], [2., 3.]]
-    f1 = CartesianField('m1', mesh1, values, intensive=True)       
-    mesh2 = CartesianMesh(dx, dy, origin=(0.5,0))    
-    values = [[4., 5.], [6., 7.]]
-    f2 = CartesianField('m2', mesh2, values, intensive=True)
-    # overlapping cells are added (and normalized by cell volume to acccount for extensivity)
-    combined_field = merge_fields("combined", f1, f2)
-    assert_allclose(combined_field.values, [[0., 1.], [3., 4.],  [6., 7.]])
-
-def test_field_normalize(fine_field):
-    # Default normalization: sum should become 1
-    normalized = fine_field.normalize()
-    assert isinstance(normalized, CartesianField)
-    assert normalized.shape == fine_field.shape
-    assert normalized.intensive == fine_field.intensive
-    assert_allclose(normalized.sum(), 1.0, atol=1e-10)
-
-    # Normalize to a specific value (e.g., 5)
-    normalized_5 = fine_field.normalize(norm=5.0)
-    assert_allclose(normalized_5.sum(), 5.0, atol=1e-10)
-
-    # Check that scaling is consistent: normalized_5 should be 5x normalized
-    assert_allclose(normalized_5.values, 5 * normalized.values) 
-
-def test_field_to_extensive(fine_field):
-    extensive_values = [
-        [[0.,         0.        ],
-        [0.02777778, 0.02777778],
-        [0.05555555, 0.05555555]],
-
-        [[0.05555556, 0.05555556],
-        [0.08333334, 0.08333334],
-        [0.11111111, 0.11111111]],
-
-        [[1/9, 1/9],
-        [0.13888889, 0.13888889],
-        [0.16666666, 0.16666666]],
-    ]
-    assert_allclose(fine_field.to_extensive(), extensive_values)
-
-def test_field_to_intensive(fine_field):
-    extensive_field = fine_field.to_extensive()
-    assert_allclose(extensive_field.to_intensive(), fine_field)
-
 
 # ─────────────────────────────────────────────────────────────────
 # Transpose tests
@@ -570,3 +529,55 @@ def test_field_from_array_invalid_steps():
     with pytest.raises(ValueError):
         CartesianField.from_array('bad', values, [1.], True)
 
+
+# ─────────────────────────────────────────────────────────────────
+# Merge fields tests
+# ─────────────────────────────────────────────────────────────────
+
+def test_merge_fields():
+    dx = np.array([0.5, 0.5])
+    dy = np.array([0.5, 0.5])
+    mesh1 = CartesianMesh(dx, dy)    
+    values = [[0., 1.], [2., 3.]]
+    f1 = CartesianField('m1', mesh1, values, intensive=True)       
+    mesh2 = CartesianMesh(dx, dy, origin=(1,1))    
+    values = [[4., 5.], [6., 7.]]
+    f2 = CartesianField('m2', mesh2, values, intensive=True)
+    merged_field = merge_fields("merged", f1, f2)
+    
+    expected_values = [
+        [0., 1., 0., 0.],
+        [2., 3., 0., 0.],
+        [0., 0., 4., 5.],
+        [0., 0., 6., 7.]
+        ]
+
+    assert_allclose(merged_field.values, expected_values)
+    assert_allclose(merged_field.mesh.axes[0], [0., 0.5, 1., 1.5, 2.])
+    assert_allclose(merged_field.mesh.axes[1], [0., 0.5, 1., 1.5, 2.])
+
+def test_combine_overlapping_extensive_field():
+    dx = np.array([0.5, 0.5])
+    dy = np.array([0.5, 0.5])
+    mesh1 = CartesianMesh(dx, dy)    
+    values = [[0., 1.], [2., 3.]]
+    f1 = CartesianField('m1', mesh1, values, intensive=False)       
+    mesh2 = CartesianMesh(dx, dy, origin=(0.5,0))    
+    values = [[4., 5.], [6., 7.]]
+    f2 = CartesianField('m2', mesh2, values, intensive=False)
+    # overlapping cells are added (and normalized by cell volume to acccount for extensivity)
+    combined_field = merge_fields("combined", f1, f2) 
+    assert_allclose(combined_field.values, [[0., 1.], [6., 8.], [6., 7.]])
+    
+def test_combine_overlapping_intensive_field():
+    dx = np.array([0.5, 0.5])
+    dy = np.array([0.5, 0.5])
+    mesh1 = CartesianMesh(dx, dy)    
+    values = [[0., 1.], [2., 3.]]
+    f1 = CartesianField('m1', mesh1, values, intensive=True)       
+    mesh2 = CartesianMesh(dx, dy, origin=(0.5,0))    
+    values = [[4., 5.], [6., 7.]]
+    f2 = CartesianField('m2', mesh2, values, intensive=True)
+    # overlapping cells are added (and normalized by cell volume to acccount for extensivity)
+    combined_field = merge_fields("combined", f1, f2)
+    assert_allclose(combined_field.values, [[0., 1.], [3., 4.],  [6., 7.]])
