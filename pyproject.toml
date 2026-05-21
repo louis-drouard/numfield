@@ -52,6 +52,8 @@ dev = [
     "pytest-mpl",
     "nbclient",
     "matplotlib",
+    "jupyter",
+    "ipykernel",
 ]
 
 [project.urls]

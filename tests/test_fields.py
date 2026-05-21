@@ -233,7 +233,7 @@ def test_numpy_functions(fine_field):
     supported_to_array = {np.ravel, np.unique, np.rot90, np.savetxt, np.isnan, np.count_nonzero, np.cumsum, np.diff, np.ediff1d}
     if packaging.version.Version(np.__version__) >= packaging.version.Version("2.0"): # pyright: ignore[reportAttributeAccessIssue]
         function_list.extend([np.trapezoid, np.pow, np.gradient]) # pyright: ignore[reportAttributeAccessIssue]
-        args_list.append([[fine_field], [fine_field, 2], [fine_field]])
+        args_list.extend([[fine_field], [fine_field, 2], [fine_field]])
 
     for func, arg in zip(function_list, args_list):
         # print(func)
